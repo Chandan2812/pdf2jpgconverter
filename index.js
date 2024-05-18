@@ -6,7 +6,8 @@ const sharp = require('sharp');
 const pdf = require('pdf-poppler');
 const archiver = require('archiver');
 const app = express();
-const port = 3000;
+require("dotenv").config();
+const port = process.env.PORT || 3000;
 
 const upload = multer({ dest: 'uploads/' });
 
@@ -42,7 +43,6 @@ async function convertPdfToJpg(pdfPath, outputDir) {
       await fs.writeFile(outputFilePath, jpgBuffer);
       await fs.remove(inputFilePath); // Remove the intermediate PNG file
 
-    //   console.log(`Converted ${pngFile} to JPG and saved to ${outputFilePath}`);
       jpgFiles.push(outputFilePath);
     }
 

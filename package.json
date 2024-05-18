@@ -12,6 +12,7 @@
   "description": "",
   "dependencies": {
     "archiver": "^7.0.1",
+    "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-zip": "^3.0.0",
     "fs-extra": "^11.2.0",
