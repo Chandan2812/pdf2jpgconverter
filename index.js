@@ -1,92 +1,82 @@
 const express = require('express');
 const multer = require('multer');
-const fs = require('fs-extra');
 const path = require('path');
-const sharp = require('sharp');
-const pdf = require('pdf-poppler');
+const fs = require('fs');
+const pdf2img = require('pdf-img-convert');
 const archiver = require('archiver');
-const app = express();
-require("dotenv").config();
-const port = process.env.PORT || 3000;
 
+const app = express();
 const upload = multer({ dest: 'uploads/' });
 
-async function convertPdfToJpg(pdfPath, outputDir) {
-  try {
-    await fs.ensureDir(outputDir);
-
-    const options = {
-      format: 'png',
-      out_dir: outputDir,
-      out_prefix: path.basename(pdfPath, path.extname(pdfPath)),
-      page: null
-    };
-
-    // Convert PDF to PNG using pdf-poppler
-    await pdf.convert(pdfPath, options);
-
-    // Get the list of PNG files generated
-    const files = await fs.readdir(outputDir);
-    const pngFiles = files.filter(file => file.endsWith('.png'));
-
-    const jpgFiles = [];
-
-    // Convert each PNG to JPG using sharp
-    for (const pngFile of pngFiles) {
-      const inputFilePath = path.join(outputDir, pngFile);
-      const outputFilePath = path.join(outputDir, `${path.basename(pngFile, '.png')}.jpg`);
-      
-      const jpgBuffer = await sharp(inputFilePath)
-        .jpeg({ quality: 80 })
-        .toBuffer();
-
-      await fs.writeFile(outputFilePath, jpgBuffer);
-      await fs.remove(inputFilePath); // Remove the intermediate PNG file
-
-      jpgFiles.push(outputFilePath);
-    }
-
-    console.log('PDF successfully converted to JPG.');
-    return jpgFiles;
-  } catch (error) {
-    console.error('Error converting PDF to JPG:', error);
-    throw error;
-  }
-}
+app.use(express.static('public'));
 
 app.post('/convert', upload.single('pdf'), async (req, res) => {
-  const pdfPath = req.file.path;
-  const outputDir = path.join(__dirname, 'output', path.basename(pdfPath, path.extname(pdfPath)));
+  const file = req.file;
+  if (!file) {
+    return res.status(400).send('No file uploaded.');
+  }
+
+  const pdfPath = path.join(__dirname, file.path);
+  const outputDir = path.join(__dirname, 'output', path.parse(file.filename).name);
+
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
 
   try {
-    const jpgFiles = await convertPdfToJpg(pdfPath, outputDir);
+    const config = {
+      width: 1200, // Adjust width for higher quality
+      height: 1600, // Adjust height for higher quality
+      scale: 2.0 // Increase scale for higher resolution
+    };
 
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', 'attachment; filename=converted-images.zip');
+    const pdfArray = await pdf2img.convert(pdfPath, config);
 
-    const archive = archiver('zip', { zlib: { level: 9 } });
-    archive.pipe(res);
-
-    for (const file of jpgFiles) {
-      archive.file(file, { name: path.basename(file) });
+    for (let i = 0; i < pdfArray.length; i++) {
+      const imagePath = path.join(outputDir, `page_${i + 1}.jpg`);
+      fs.writeFileSync(imagePath, Buffer.from(pdfArray[i]));
     }
 
-    archive.finalize();
-
-    // Cleanup: Delete files and folder after sending
-    archive.on('end', async () => {
-      for (const file of jpgFiles) {
-        await fs.remove(file);
-      }
-      await fs.remove(outputDir);
-      await fs.remove(pdfPath);
+    // Create a zip file
+    const zipPath = path.join(outputDir, `${path.parse(file.filename).name}.zip`);
+    const output = fs.createWriteStream(zipPath);
+    const archive = archiver('zip', {
+      zlib: { level: 9 } // Compression level
     });
 
+    output.on('close', () => {
+      // Send the zip file to the client
+      res.download(zipPath, (err) => {
+        if (err) {
+          console.error('Error downloading the file:', err);
+          res.status(500).send('An error occurred while downloading the file.');
+        } else {
+          // Clean up files and directories
+          fs.unlinkSync(pdfPath);
+          fs.unlinkSync(zipPath);
+          setTimeout(() => {
+            fs.rmSync(outputDir, { recursive: true, force: true });
+          }, 1000); // Adding a delay to ensure the zip file is properly closed
+        }
+      });
+    });
+
+    archive.on('error', (err) => {
+      throw err;
+    });
+
+    archive.pipe(output);
+    archive.directory(outputDir, false);
+    archive.finalize();
+
   } catch (error) {
-    res.status(500).json({ error: 'Error converting PDF to JPG.', details: error.message });
+    console.error(error);
+    res.status(500).send('An error occurred while converting the PDF.');
+    fs.unlinkSync(pdfPath);
+    fs.rmSync(outputDir, { recursive: true, force: true });
   }
 });
 
-app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
+app.listen(3000, () => {
+  console.log('Server started on http://localhost:3000');
 });
